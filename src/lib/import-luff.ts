@@ -3,7 +3,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
 import { setSecret } from "./keychain.ts";
-import { writeConfig } from "./config.ts";
+import { readConfig, writeConfig } from "./config.ts";
 import type { AccountConfig } from "./accounts.ts";
 
 // Legacy luff locations.
@@ -41,15 +41,21 @@ export function importFromLuff(): ImportSummary {
   const copied: string[] = [];
   const missing: string[] = [];
 
-  // 1. Account registry.
+  // 1. Account registry — merge into any existing pigeon accounts rather than
+  //    overwriting, so re-running is idempotent and pigeon-native accounts survive.
   let accounts: AccountConfig[] = [];
   if (existsSync(LUFF_ACCOUNTS)) {
     try {
       accounts = JSON.parse(readFileSync(LUFF_ACCOUNTS, "utf-8")) as AccountConfig[];
-      writeConfig("accounts", accounts);
     } catch {
       /* leave accounts empty */
     }
+  }
+  if (accounts.length) {
+    const byAlias = new Map<string, AccountConfig>();
+    for (const a of readConfig<AccountConfig[]>("accounts") ?? []) byAlias.set(a.alias, a);
+    for (const a of accounts) if (!byAlias.has(a.alias)) byAlias.set(a.alias, a);
+    writeConfig("accounts", [...byAlias.values()]);
   }
 
   // 2. OAuth app credentials (shared across Google accounts).

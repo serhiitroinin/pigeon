@@ -9,7 +9,6 @@ import type {
 } from "../types.ts";
 
 const SESSION_URL = "https://api.fastmail.com/jmap/session";
-const TOOL = "pigeon-fm";
 
 // ── JMAP types ───────────────────────────────────────────────────
 
@@ -61,22 +60,26 @@ function jmapResult(resp: JmapResponse, index: number, tag: string): Record<stri
   return result;
 }
 
-// ── Session & mailbox cache ──────────────────────────────────────
+// ── Per-account session & mailbox caches ─────────────────────────
+// Keyed by account alias so multiple Fastmail accounts never collide.
 
-let cachedSession: { apiUrl: string; accountId: string } | null = null;
-let cachedMailboxes: Map<string, string> | null = null; // role → id
+const sessionCache = new Map<string, { apiUrl: string; accountId: string }>();
+const mailboxCache = new Map<string, Map<string, string>>(); // alias → (role → id)
 
-function getToken(): string {
-  const token = getSecret(TOOL, "api-token");
+/** Read the API token for a specific account (Keychain: pigeon-<alias> / api-token). */
+function getToken(account: AccountConfig): string {
+  const token = getSecret(`pigeon-${account.alias}`, "api-token");
   if (!token) {
-    throw new Error(`No Fastmail API token. Run: pigeon auth-login fm`);
+    throw new Error(`No Fastmail API token for "${account.alias}". Run: pigeon auth-login ${account.alias}`);
   }
   return token;
 }
 
-async function getSession(): Promise<{ apiUrl: string; accountId: string }> {
-  if (cachedSession) return cachedSession;
-  const token = getToken();
+async function getSession(account: AccountConfig): Promise<{ apiUrl: string; accountId: string }> {
+  const cached = sessionCache.get(account.alias);
+  if (cached) return cached;
+
+  const token = getToken(account);
   const res = await fetch(SESSION_URL, {
     headers: { Authorization: `Bearer ${token}` },
   });
@@ -87,14 +90,15 @@ async function getSession(): Promise<{ apiUrl: string; accountId: string }> {
   const accountId =
     session.primaryAccounts["urn:ietf:params:jmap:mail"] ??
     Object.values(session.primaryAccounts)[0];
-  if (!accountId) throw new Error("No JMAP pigeon account found");
-  cachedSession = { apiUrl: session.apiUrl, accountId };
-  return cachedSession;
+  if (!accountId) throw new Error("No JMAP mail account found");
+  const value = { apiUrl: session.apiUrl, accountId };
+  sessionCache.set(account.alias, value);
+  return value;
 }
 
-async function jmapCall(methodCalls: unknown[][]): Promise<JmapResponse> {
-  const { apiUrl } = await getSession();
-  const token = getToken();
+async function jmapCall(account: AccountConfig, methodCalls: unknown[][]): Promise<JmapResponse> {
+  const { apiUrl } = await getSession(account);
+  const token = getToken(account);
   const res = await fetch(apiUrl, {
     method: "POST",
     headers: {
@@ -113,25 +117,27 @@ async function jmapCall(methodCalls: unknown[][]): Promise<JmapResponse> {
   return res.json() as Promise<JmapResponse>;
 }
 
-async function getMailboxId(role: string): Promise<string> {
-  if (cachedMailboxes) {
-    const id = cachedMailboxes.get(role);
+async function getMailboxId(account: AccountConfig, role: string): Promise<string> {
+  const cached = mailboxCache.get(account.alias);
+  if (cached) {
+    const id = cached.get(role);
     if (id) return id;
   }
 
-  const { accountId } = await getSession();
-  const resp = await jmapCall([
+  const { accountId } = await getSession(account);
+  const resp = await jmapCall(account, [
     ["Mailbox/get", { accountId, properties: ["id", "name", "role"] }, "mb"],
   ]);
   const result = jmapResult(resp, 0, "Mailbox/get");
   const mailboxes = (result.list as JmapMailbox[]) ?? [];
 
-  cachedMailboxes = new Map();
+  const byRole = new Map<string, string>();
   for (const mb of mailboxes) {
-    if (mb.role) cachedMailboxes.set(mb.role, mb.id);
+    if (mb.role) byRole.set(mb.role, mb.id);
   }
+  mailboxCache.set(account.alias, byRole);
 
-  const id = cachedMailboxes.get(role);
+  const id = byRole.get(role);
   if (!id) throw new Error(`No mailbox with role "${role}" found`);
   return id;
 }
@@ -159,9 +165,9 @@ function toEnvelope(email: JmapEmail): Envelope {
 // ── Provider ─────────────────────────────────────────────────────
 
 export const fastmailProvider: MailProvider = {
-  async listMessages(_account, opts) {
-    const { accountId } = await getSession();
-    const inboxId = await getMailboxId("inbox");
+  async listMessages(account, opts) {
+    const { accountId } = await getSession(account);
+    const inboxId = await getMailboxId(account, "inbox");
     const limit = opts?.limit ?? 20;
 
     const filter: Record<string, unknown> = { inMailbox: inboxId };
@@ -169,7 +175,7 @@ export const fastmailProvider: MailProvider = {
       filter.notKeyword = "$seen";
     }
 
-    const resp = await jmapCall([
+    const resp = await jmapCall(account, [
       [
         "Email/query",
         {
@@ -196,9 +202,9 @@ export const fastmailProvider: MailProvider = {
     return emails.map(toEnvelope);
   },
 
-  async getMessage(_account, id) {
-    const { accountId } = await getSession();
-    const resp = await jmapCall([
+  async getMessage(account, id) {
+    const { accountId } = await getSession(account);
+    const resp = await jmapCall(account, [
       [
         "Email/get",
         {
@@ -230,9 +236,9 @@ export const fastmailProvider: MailProvider = {
     };
   },
 
-  async search(_account, query, limit) {
-    const { accountId } = await getSession();
-    const resp = await jmapCall([
+  async search(account, query, limit) {
+    const { accountId } = await getSession(account);
+    const resp = await jmapCall(account, [
       [
         "Email/query",
         {
@@ -259,10 +265,10 @@ export const fastmailProvider: MailProvider = {
     return emails.map(toEnvelope);
   },
 
-  async archive(_account, ids) {
-    const { accountId } = await getSession();
-    const inboxId = await getMailboxId("inbox");
-    const archiveId = await getMailboxId("archive");
+  async archive(account, ids) {
+    const { accountId } = await getSession(account);
+    const inboxId = await getMailboxId(account, "inbox");
+    const archiveId = await getMailboxId(account, "archive");
 
     const update: Record<string, unknown> = {};
     for (const id of ids) {
@@ -272,12 +278,11 @@ export const fastmailProvider: MailProvider = {
       };
     }
 
-    const resp = await jmapCall([
+    const resp = await jmapCall(account, [
       ["Email/set", { accountId, update }, "s"],
     ]);
 
     const result = jmapResult(resp, 0, "Email/set");
-    const updated = result.updated as Record<string, unknown> | null;
     const notUpdated = result.notUpdated as Record<string, { type: string }> | null;
 
     return ids.map((id): ActionResult => {
@@ -288,14 +293,14 @@ export const fastmailProvider: MailProvider = {
     });
   },
 
-  async flag(_account, ids) {
-    const { accountId } = await getSession();
+  async flag(account, ids) {
+    const { accountId } = await getSession(account);
     const update: Record<string, unknown> = {};
     for (const id of ids) {
       update[id] = { "keywords/$flagged": true };
     }
 
-    const resp = await jmapCall([
+    const resp = await jmapCall(account, [
       ["Email/set", { accountId, update }, "s"],
     ]);
 
@@ -310,14 +315,14 @@ export const fastmailProvider: MailProvider = {
     });
   },
 
-  async markRead(_account, ids) {
-    const { accountId } = await getSession();
+  async markRead(account, ids) {
+    const { accountId } = await getSession(account);
     const update: Record<string, unknown> = {};
     for (const id of ids) {
       update[id] = { "keywords/$seen": true };
     }
 
-    const resp = await jmapCall([
+    const resp = await jmapCall(account, [
       ["Email/set", { accountId, update }, "s"],
     ]);
 
@@ -332,10 +337,10 @@ export const fastmailProvider: MailProvider = {
     });
   },
 
-  async trash(_account, ids) {
-    const { accountId } = await getSession();
-    const inboxId = await getMailboxId("inbox");
-    const trashId = await getMailboxId("trash");
+  async trash(account, ids) {
+    const { accountId } = await getSession(account);
+    const inboxId = await getMailboxId(account, "inbox");
+    const trashId = await getMailboxId(account, "trash");
 
     const update: Record<string, unknown> = {};
     for (const id of ids) {
@@ -345,7 +350,7 @@ export const fastmailProvider: MailProvider = {
       };
     }
 
-    const resp = await jmapCall([
+    const resp = await jmapCall(account, [
       ["Email/set", { accountId, update }, "s"],
     ]);
 
@@ -360,10 +365,10 @@ export const fastmailProvider: MailProvider = {
     });
   },
 
-  async unreadCount(_account) {
-    const { accountId } = await getSession();
+  async unreadCount(account) {
+    const { accountId } = await getSession(account);
     // Use Mailbox/get for exact unread count (same as IMAP \Unseen)
-    const resp = await jmapCall([
+    const resp = await jmapCall(account, [
       ["Mailbox/get", { accountId, properties: ["id", "role", "unreadEmails"] }, "mb"],
     ]);
     const result = jmapResult(resp, 0, "Mailbox/get");

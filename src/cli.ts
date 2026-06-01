@@ -10,10 +10,11 @@ import {
   getValidAccessToken,
 } from "./lib/oauth2.ts";
 import { HttpClient } from "./lib/http.ts";
-import { setSecret, getSecret } from "./lib/keychain.ts";
+import { setSecret, getSecret, deleteSecret } from "./lib/keychain.ts";
 import * as out from "./lib/output.ts";
 import { error as showError } from "./lib/output.ts";
 import { importFromLuff } from "./lib/import-luff.ts";
+import { readSecret } from "./lib/prompt.ts";
 import { gmailProvider, GMAIL_OAUTH2_CONFIG } from "./providers/gmail.ts";
 import { fastmailProvider } from "./providers/fastmail.ts";
 import {
@@ -65,12 +66,14 @@ async function oauthCallbackFlow(
 ): Promise<{ code: string; redirectUri: string }> {
   return new Promise((resolve, reject) => {
     let redirectUri = "";
+    let timeoutId: ReturnType<typeof setTimeout> | undefined;
     const server = Bun.serve({
       port: 0,
       fetch(req) {
         const url = new URL(req.url);
         const error = url.searchParams.get("error");
         if (error) {
+          clearTimeout(timeoutId);
           reject(new Error(`OAuth2 error: ${error}`));
           setTimeout(() => server.stop(), 100);
           return new Response(`Authentication failed: ${error}. Close this tab.`, {
@@ -85,12 +88,14 @@ async function oauthCallbackFlow(
           });
         }
         if (returnedState !== state) {
+          clearTimeout(timeoutId);
           reject(new Error("OAuth2 state mismatch — possible CSRF"));
           setTimeout(() => server.stop(), 100);
           return new Response("State mismatch. Authentication aborted.", {
             headers: { "Content-Type": "text/plain" },
           });
         }
+        clearTimeout(timeoutId);
         resolve({ code: authCode, redirectUri });
         setTimeout(() => server.stop(), 100);
         return new Response(
@@ -116,7 +121,7 @@ async function oauthCallbackFlow(
     Bun.spawn(["open", authUrl]);
     console.log("Browser opened. Complete the OAuth2 consent flow...");
 
-    setTimeout(() => {
+    timeoutId = setTimeout(() => {
       reject(new Error("OAuth2 timeout — no callback received after 2 minutes"));
       server.stop();
     }, 120_000);
@@ -129,7 +134,7 @@ const program = new Command();
 program
   .name("pigeon")
   .description("Email CLI for Gmail and Fastmail")
-  .version("0.1.0")
+  .version("0.1.1")
   .addHelpText("after", `
 OVERVIEW
   Native email client using Gmail REST API and Fastmail JMAP.
@@ -178,22 +183,28 @@ COMPLEMENTARY TOOLS
 // ── Auth commands ────────────────────────────────────────────────
 
 program
-  .command("auth-setup <client-id> <client-secret> <redirect-uri>")
-  .description("Save OAuth2 client credentials for Gmail accounts (one-time)")
+  .command("auth-setup <client-id> <redirect-uri>")
+  .description("Save OAuth2 client credentials for Gmail accounts (client secret prompted securely)")
   .addHelpText("after", `
 Details:
   Stores OAuth2 app credentials in macOS Keychain (service: pigeon).
-  These are shared across all 3 Gmail accounts — run once, not per account.
+  These are shared across all Gmail accounts — run once, not per account.
   Get credentials from Google Cloud Console > APIs & Credentials.
+  The client secret is prompted securely (never passed as an argument).
 
   The Gmail API must be enabled in your Google Cloud project.
   Required scope: https://www.googleapis.com/auth/gmail.modify
 
 Example:
-  pigeon auth-setup 12345.apps.googleusercontent.com GOCSPX-xxxx http://localhost:9999
+  pigeon auth-setup 12345.apps.googleusercontent.com http://localhost:9999
 `)
-  .action(async (clientId: string, clientSecret: string, redirectUri: string) => {
+  .action(async (clientId: string, redirectUri: string) => {
     try {
+      const clientSecret = await readSecret("Google OAuth2 client secret: ");
+      if (!clientSecret) {
+        showError("No client secret provided.");
+        process.exit(1);
+      }
       saveOAuth2Credentials("pigeon", clientId, clientSecret, redirectUri);
       out.success("OAuth2 credentials saved for Gmail accounts.");
       out.info("Now run: pigeon auth-login <alias> for each Gmail account (s4t, st, ae)");
@@ -204,33 +215,32 @@ Example:
   });
 
 program
-  .command("auth-login <account> [token]")
+  .command("auth-login <account>")
   .description("Authenticate an account (OAuth2 for Gmail, API token for Fastmail)")
   .addHelpText("after", `
 Details:
-  Gmail accounts (s4t, st, ae):
-    Opens a browser for OAuth2 consent. Approve access, copy the authorization
-    code from the redirect URL, and paste it when prompted.
+  Gmail accounts:
+    Opens a browser for OAuth2 consent via a local callback server.
     Requires: pigeon auth-setup first (one-time).
-    Tokens stored per account: pigeon-s4t, pigeon-st, pigeon-ae.
+    Tokens stored per account: pigeon-<alias>.
 
-  Fastmail (fm):
-    Prompts for an API token. Generate one at:
+  Fastmail:
+    Prompts securely for an API token. Generate one at:
     Fastmail > Settings > Privacy & Security > Manage API tokens.
-    Token stored as: pigeon-fm / api-token.
+    Token stored per account: pigeon-<alias> / api-token.
 
 Examples:
   pigeon auth-login s4t       # Gmail OAuth2 flow
   pigeon auth-login fm        # Fastmail API token prompt
 `)
-  .action(async (accountInput: string, tokenArg?: string) => {
+  .action(async (accountInput: string) => {
     try {
       const account = resolveAccount(accountInput);
 
       if (account.provider === "fastmail") {
-        const token = tokenArg?.trim();
+        const token = await readSecret("Fastmail API token: ");
         if (!token) {
-          showError("Fastmail requires an API token argument: pigeon auth-login fm <token>");
+          showError("No API token provided.");
           out.info("Generate one at: Fastmail > Settings > Privacy & Security > Manage API tokens");
           process.exit(1);
         }
@@ -323,11 +333,21 @@ accountsCmd
 
 accountsCmd
   .command("remove <alias>")
-  .description("Remove an account")
+  .description("Remove an account and purge its Keychain credentials")
   .action(async (alias: string) => {
     try {
-      removeAccount(alias);
-      out.success(`Account "${alias}" removed.`);
+      const account = resolveAccount(alias);
+      removeAccount(account.alias);
+      // Also purge the account's Keychain entries so no orphan secrets remain.
+      const tool = `pigeon-${account.alias}`;
+      if (account.provider === "fastmail") {
+        deleteSecret(tool, "api-token");
+      } else {
+        for (const key of ["access-token", "refresh-token", "expires-at"]) {
+          deleteSecret(tool, key);
+        }
+      }
+      out.success(`Account "${account.alias}" removed and Keychain credentials purged.`);
     } catch (e) {
       showError((e as Error).message);
       process.exit(1);

@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# release.sh — build cross-platform binaries, tarball them, compute SHA256s,
-#              and (optionally) upload to a GitHub release.
+# release.sh — build macOS binaries, tarball them, compute SHA256s,
+#              and (optionally) create/refresh a GitHub release.
 #
 # Usage:
 #   ./release.sh <version>           # build + tarball, print SHAs
-#   ./release.sh <version> --upload  # also: gh release create + upload assets
+#   ./release.sh <version> --upload  # also create (or clobber) the GitHub release
 #
-# Requires: bun, tar, sha256sum (or shasum on macOS), gh (only if --upload).
+# macOS-only: these tools depend on the macOS Keychain (`security`) and `open`.
 
 set -euo pipefail
 
@@ -20,8 +20,6 @@ mkdir -p "$OUT"
 TARGETS=(
   "bun-darwin-arm64:darwin-arm64"
   "bun-darwin-x64:darwin-x64"
-  "bun-linux-arm64:linux-arm64"
-  "bun-linux-x64:linux-x64"
 )
 
 sha() {
@@ -29,7 +27,7 @@ sha() {
   else shasum -a 256 "$1" | awk '{print $1}'; fi
 }
 
-echo "Building $NAME v$VERSION for 4 targets…"
+echo "Building $NAME v$VERSION for macOS (arm64, x64)…"
 for t in "${TARGETS[@]}"; do
   bun_target="${t%%:*}"
   out_suffix="${t##*:}"
@@ -51,10 +49,12 @@ echo
 
 if [[ "$UPLOAD" == "--upload" ]]; then
   TAG="v$VERSION"
-  echo "Creating GitHub release $TAG and uploading assets…"
-  gh release create "$TAG" \
-    --title "$NAME $TAG" \
-    --notes "Release $TAG" \
-    "$OUT"/*.tar.gz
+  if gh release view "$TAG" >/dev/null 2>&1; then
+    echo "Release $TAG exists — clobbering assets…"
+    gh release upload "$TAG" "$OUT"/*.tar.gz --clobber
+  else
+    echo "Creating GitHub release $TAG…"
+    gh release create "$TAG" --title "$NAME $TAG" --notes "Release $TAG" "$OUT"/*.tar.gz
+  fi
   echo "Done. Update the formula's sha256 fields with the SHAs above."
 fi

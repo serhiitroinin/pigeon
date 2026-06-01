@@ -15,9 +15,12 @@ function serviceName(tool: string): string {
 export function setSecret(tool: string, account: string, value: string): void {
   const service = serviceName(tool);
   try {
+    if (value.includes("\n")) {
+      throw new Error("Secret must not contain a newline.");
+    }
     execFileSync("security", [
-      "add-generic-password", "-s", service, "-a", account, "-w", value, "-U",
-    ], { stdio: "pipe" });
+      "add-generic-password", "-U", "-s", service, "-a", account, "-w",
+    ], { input: `${value}\n${value}\n`, stdio: ["pipe", "ignore", "ignore"] });
   } catch (e: unknown) {
     throw new Error(
       `Failed to store secret in Keychain (service=${service}, account=${account}): ${(e as Error).message}`
