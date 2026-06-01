@@ -15,12 +15,11 @@ function serviceName(tool: string): string {
 export function setSecret(tool: string, account: string, value: string): void {
   const service = serviceName(tool);
   try {
-    if (value.includes("\n")) {
-      throw new Error("Secret must not contain a newline.");
-    }
+    // Pass the secret via argv (-w value): macOS `security` reading the password from
+    // a stdin/tty prompt truncates at ~128 chars, which silently corrupts OAuth tokens.
     execFileSync("security", [
-      "add-generic-password", "-U", "-s", service, "-a", account, "-w",
-    ], { input: `${value}\n${value}\n`, stdio: ["pipe", "ignore", "ignore"] });
+      "add-generic-password", "-s", service, "-a", account, "-w", value, "-U",
+    ], { stdio: "pipe" });
   } catch (e: unknown) {
     throw new Error(
       `Failed to store secret in Keychain (service=${service}, account=${account}): ${(e as Error).message}`
