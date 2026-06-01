@@ -53,7 +53,7 @@ if [[ "$UPLOAD" == "--upload" ]]; then
     echo "Release $TAG exists — clobbering assets…"
     gh release upload "$TAG" "$OUT"/*.tar.gz --clobber
   else
-    echo "Creating GitHub release $TAG…"
+    echo "Creating GitHub release ${TAG}…"
     gh release create "$TAG" --title "$NAME $TAG" --notes "Release $TAG" "$OUT"/*.tar.gz
   fi
   echo "Done. Update the formula's sha256 fields with the SHAs above."
