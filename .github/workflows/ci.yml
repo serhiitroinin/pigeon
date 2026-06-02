@@ -13,6 +13,12 @@ jobs:
       - uses: oven-sh/setup-bun@v2
       - run: bun install
       - run: bun run typecheck
-      - run: bun test
+      - name: Test (if any)
+        run: |
+          if find . -name '*.test.ts' -not -path './node_modules/*' -print -quit | grep -q .; then
+            bun test
+          else
+            echo "No test files — skipping."
+          fi
       - run: bun build src/cli.ts --compile --outfile dist/pigeon
       - run: ./dist/pigeon --version
