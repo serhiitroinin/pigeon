@@ -11,7 +11,7 @@ The name is the carrier pigeon. This is an unofficial third-party CLI.
 brew install serhiitroinin/tap/pigeon
 ```
 
-Or run from source with [Bun](https://bun.sh):
+Or run from source with [Bun](https://bun.sh) ≥ 1.3.9 (for the native `Bun.secrets` keychain API):
 
 ```sh
 bun install
