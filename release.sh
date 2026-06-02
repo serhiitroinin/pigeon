@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
 # release.sh — build macOS binaries, tarball them, compute SHA256s,
-#              and (optionally) create/refresh a GitHub release.
+#              and (optionally) create an immutable GitHub release.
 #
 # Usage:
 #   ./release.sh <version>           # build + tarball, print SHAs
-#   ./release.sh <version> --upload  # also create (or clobber) the GitHub release
+#   ./release.sh <version> --upload  # also create the GitHub release (must be a new tag)
 #
 # macOS-only: these tools depend on the macOS Keychain (`security`) and `open`.
+# Releases are immutable — to ship rebuilt assets, bump the version.
 
 set -euo pipefail
 
@@ -50,11 +51,10 @@ echo
 if [[ "$UPLOAD" == "--upload" ]]; then
   TAG="v$VERSION"
   if gh release view "$TAG" >/dev/null 2>&1; then
-    echo "Release $TAG exists — clobbering assets…"
-    gh release upload "$TAG" "$OUT"/*.tar.gz --clobber
-  else
-    echo "Creating GitHub release ${TAG}…"
-    gh release create "$TAG" --title "$NAME $TAG" --notes "Release $TAG" "$OUT"/*.tar.gz
+    echo "Release $TAG already exists. Releases are immutable — bump the version and re-run." >&2
+    exit 1
   fi
+  echo "Creating GitHub release ${TAG}…"
+  gh release create "$TAG" --title "$NAME $TAG" --notes "Release $TAG" "$OUT"/*.tar.gz
   echo "Done. Update the formula's sha256 fields with the SHAs above."
 fi

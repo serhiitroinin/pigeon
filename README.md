@@ -27,11 +27,11 @@ pigeon accounts add s4t you@gmail.com google
 pigeon accounts add fm you@fastmail.com fastmail
 
 # Gmail: one-time OAuth2 app credentials, then per-account login
-pigeon auth-setup <client-id> <client-secret> <redirect-uri>
+pigeon auth-setup <client-id> <redirect-uri>
 pigeon auth-login s4t
 
 # Fastmail: API token (Settings → Privacy & Security → Manage API tokens)
-pigeon auth-login fm <token>
+pigeon auth-login fm
 
 pigeon accounts            # list accounts + auth status
 ```

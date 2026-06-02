@@ -134,7 +134,7 @@ const program = new Command();
 program
   .name("pigeon")
   .description("Email CLI for Gmail and Fastmail")
-  .version("0.1.1")
+  .version("0.1.2")
   .addHelpText("after", `
 OVERVIEW
   Native email client using Gmail REST API and Fastmail JMAP.
@@ -144,7 +144,7 @@ OVERVIEW
 
 COMMAND CATEGORIES
   Auth:
-    auth-setup <id> <secret> <uri>   Save OAuth2 client credentials (one-time)
+    auth-setup <id> <uri>            Save OAuth2 client credentials (secret prompted)
     auth-login <account>             OAuth2 flow (Gmail) or API token (Fastmail)
     accounts                         List accounts and auth status
 
