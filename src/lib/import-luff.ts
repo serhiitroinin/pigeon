@@ -30,6 +30,21 @@ export interface ImportSummary {
 }
 
 /**
+ * Merge incoming accounts into existing ones, keyed by alias. On an alias
+ * collision the existing account wins (incoming is dropped), so importing is
+ * idempotent and never clobbers an account already configured here. Pure.
+ */
+export function mergeAccounts(
+  existing: AccountConfig[],
+  incoming: AccountConfig[],
+): AccountConfig[] {
+  const byAlias = new Map<string, AccountConfig>();
+  for (const a of existing) byAlias.set(a.alias, a);
+  for (const a of incoming) if (!byAlias.has(a.alias)) byAlias.set(a.alias, a);
+  return [...byAlias.values()];
+}
+
+/**
  * One-shot migration from the legacy `luff` mail tool:
  *   1. ~/.config/luff/accounts.json  → ~/.config/pigeon/accounts.json
  *   2. OAuth app credentials  luff-mail        → pigeon
@@ -52,10 +67,7 @@ export function importFromLuff(): ImportSummary {
     }
   }
   if (accounts.length) {
-    const byAlias = new Map<string, AccountConfig>();
-    for (const a of readConfig<AccountConfig[]>("accounts") ?? []) byAlias.set(a.alias, a);
-    for (const a of accounts) if (!byAlias.has(a.alias)) byAlias.set(a.alias, a);
-    writeConfig("accounts", [...byAlias.values()]);
+    writeConfig("accounts", mergeAccounts(readConfig<AccountConfig[]>("accounts") ?? [], accounts));
   }
 
   // 2. OAuth app credentials (shared across Google accounts).
