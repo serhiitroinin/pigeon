@@ -51,22 +51,6 @@ pigeon flag ae <id>                   # star/flag
 pigeon trash s4t <id>                 # move to trash
 ```
 
-## Migrating from `luff`
-
-`pigeon` was extracted from the `mail` tool in the `luff` monorepo. One command migrates
-everything:
-
-```sh
-pigeon auth-import-from-luff
-```
-
-This copies `~/.config/luff/accounts.json` → `~/.config/pigeon/accounts.json`, the Gmail
-OAuth app credentials (`luff-mail` → `pigeon`), and each account's tokens
-(`luff-mail-<alias>` → `pigeon-<alias>`). Idempotent and non-destructive.
-
-> Note: `pigeon` and the calendar CLI `almanac` no longer share a single account
-> registry as the old luff `mail`/`cal` did — each keeps its own config.
-
 ## License
 
 MIT

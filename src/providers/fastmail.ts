@@ -67,8 +67,8 @@ const sessionCache = new Map<string, { apiUrl: string; accountId: string }>();
 const mailboxCache = new Map<string, Map<string, string>>(); // alias → (role → id)
 
 /** Read the API token for a specific account (Keychain: pigeon-<alias> / api-token). */
-function getToken(account: AccountConfig): string {
-  const token = getSecret(`pigeon-${account.alias}`, "api-token");
+async function getToken(account: AccountConfig): Promise<string> {
+  const token = await getSecret(`pigeon-${account.alias}`, "api-token");
   if (!token) {
     throw new Error(`No Fastmail API token for "${account.alias}". Run: pigeon auth-login ${account.alias}`);
   }
@@ -79,7 +79,7 @@ async function getSession(account: AccountConfig): Promise<{ apiUrl: string; acc
   const cached = sessionCache.get(account.alias);
   if (cached) return cached;
 
-  const token = getToken(account);
+  const token = await getToken(account);
   const res = await fetch(SESSION_URL, {
     headers: { Authorization: `Bearer ${token}` },
   });
@@ -98,7 +98,7 @@ async function getSession(account: AccountConfig): Promise<{ apiUrl: string; acc
 
 async function jmapCall(account: AccountConfig, methodCalls: unknown[][]): Promise<JmapResponse> {
   const { apiUrl } = await getSession(account);
-  const token = getToken(account);
+  const token = await getToken(account);
   const res = await fetch(apiUrl, {
     method: "POST",
     headers: {

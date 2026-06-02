@@ -13,7 +13,6 @@ import { HttpClient } from "./lib/http.ts";
 import { setSecret, getSecret, deleteSecret } from "./lib/keychain.ts";
 import * as out from "./lib/output.ts";
 import { error as showError } from "./lib/output.ts";
-import { importFromLuff } from "./lib/import-luff.ts";
 import { readSecret } from "./lib/prompt.ts";
 import { gmailProvider, GMAIL_OAUTH2_CONFIG } from "./providers/gmail.ts";
 import { fastmailProvider } from "./providers/fastmail.ts";
@@ -135,7 +134,7 @@ const program = new Command();
 program
   .name("pigeon")
   .description("Email CLI for Gmail and Fastmail")
-  .version("0.1.3")
+  .version("0.2.0")
   .addHelpText("after", `
 OVERVIEW
   Native email client using Gmail REST API and Fastmail JMAP.
@@ -206,7 +205,7 @@ Example:
         showError("No client secret provided.");
         process.exit(1);
       }
-      saveOAuth2Credentials("pigeon", clientId, clientSecret, redirectUri);
+      await saveOAuth2Credentials("pigeon", clientId, clientSecret, redirectUri);
       out.success("OAuth2 credentials saved for Gmail accounts.");
       out.info("Now run: pigeon auth-login <alias> for each Gmail account (s4t, st, ae)");
     } catch (e) {
@@ -245,14 +244,14 @@ Examples:
           out.info("Generate one at: Fastmail > Settings > Privacy & Security > Manage API tokens");
           process.exit(1);
         }
-        setSecret(`pigeon-${account.alias}`, "api-token", token);
+        await setSecret(`pigeon-${account.alias}`, "api-token", token);
         out.success(`Fastmail API token saved for ${account.email}`);
         return;
       }
 
       // Gmail: OAuth2 flow with local callback server
       const tool = `pigeon-${account.alias}`;
-      const creds = loadOAuth2Credentials("pigeon");
+      const creds = await loadOAuth2Credentials("pigeon");
       const state = crypto.randomUUID();
 
       // Start callback server, open browser, wait for code
@@ -269,7 +268,7 @@ Examples:
         redirectUri,
         code,
       );
-      saveTokens(tool, tokens);
+      await saveTokens(tool, tokens);
       out.success(`Authenticated ${account.email} (tokens saved as ${tool})`);
     } catch (e) {
       showError((e as Error).message);
@@ -301,16 +300,16 @@ accountsCmd
       out.info("No accounts configured. Run: pigeon accounts add <alias> <email> <provider>");
       return;
     }
-    const rows = accounts.map((a) => {
+    const rows = await Promise.all(accounts.map(async (a) => {
       let auth = "MISSING";
       if (a.provider === "fastmail") {
-        auth = getSecret(`pigeon-${a.alias}`, "api-token") ? "OK" : "MISSING";
+        auth = (await getSecret(`pigeon-${a.alias}`, "api-token")) ? "OK" : "MISSING";
       } else {
-        const tokens = loadTokens(`pigeon-${a.alias}`);
+        const tokens = await loadTokens(`pigeon-${a.alias}`);
         auth = tokens ? "OK" : "MISSING";
       }
       return [a.alias, a.email, a.provider, auth];
-    });
+    }));
     out.table(["Alias", "Email", "Provider", "Auth"], rows);
   });
 
@@ -342,44 +341,16 @@ accountsCmd
       // Also purge the account's Keychain entries so no orphan secrets remain.
       const tool = `pigeon-${account.alias}`;
       if (account.provider === "fastmail") {
-        deleteSecret(tool, "api-token");
+        await deleteSecret(tool, "api-token");
       } else {
         for (const key of ["access-token", "refresh-token", "expires-at"]) {
-          deleteSecret(tool, key);
+          await deleteSecret(tool, key);
         }
       }
       out.success(`Account "${account.alias}" removed and Keychain credentials purged.`);
     } catch (e) {
       showError((e as Error).message);
       process.exit(1);
-    }
-  });
-
-program
-  .command("auth-import-from-luff")
-  .description("One-shot: migrate accounts + Keychain auth from the legacy luff mail tool")
-  .addHelpText("after", `
-Details:
-  For users migrating from the 'mail' tool shipped via the luff monorepo.
-  Copies, in order:
-    1. ~/.config/luff/accounts.json  → ~/.config/pigeon/accounts.json
-    2. OAuth app credentials  luff-mail        → pigeon
-    3. Per-account tokens     luff-mail-<alias> → pigeon-<alias>
-  Idempotent — re-run is safe. The luff entries are NOT deleted.
-
-Example:
-  pigeon auth-import-from-luff`)
-  .action(() => {
-    const { accountsImported, copied, missing } = importFromLuff();
-    if (copied.length === 0 && accountsImported === 0) {
-      showError("Nothing found under luff (no accounts.json, no luff-mail Keychain entries).");
-      process.exit(1);
-    }
-    out.success(`Imported ${accountsImported} accounts and ${copied.length} Keychain entries from luff:`);
-    for (const k of copied) console.log(`  + ${k}`);
-    if (missing.length > 0) {
-      out.blank();
-      out.info(`Missing (not present in luff): ${missing.join(", ")}`);
     }
   });
 

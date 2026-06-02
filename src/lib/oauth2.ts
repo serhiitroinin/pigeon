@@ -12,45 +12,39 @@ export interface OAuth2Tokens {
   expiresAt: number; // unix seconds
 }
 
-/**
- * Store OAuth2 client credentials in Keychain.
- */
-export function saveOAuth2Credentials(
+/** Store OAuth2 client credentials in the keychain. */
+export async function saveOAuth2Credentials(
   tool: string,
   clientId: string,
   clientSecret: string,
-  redirectUri: string
-): void {
-  setSecret(tool, "client-id", clientId);
-  setSecret(tool, "client-secret", clientSecret);
-  setSecret(tool, "redirect-uri", redirectUri);
+  redirectUri: string,
+): Promise<void> {
+  await setSecret(tool, "client-id", clientId);
+  await setSecret(tool, "client-secret", clientSecret);
+  await setSecret(tool, "redirect-uri", redirectUri);
 }
 
-/**
- * Load OAuth2 client credentials from Keychain.
- */
-export function loadOAuth2Credentials(tool: string): {
+/** Load OAuth2 client credentials from the keychain. */
+export async function loadOAuth2Credentials(tool: string): Promise<{
   clientId: string;
   clientSecret: string;
   redirectUri: string;
-} {
-  const clientId = getSecret(tool, "client-id");
-  const clientSecret = getSecret(tool, "client-secret");
-  const redirectUri = getSecret(tool, "redirect-uri");
+}> {
+  const clientId = await getSecret(tool, "client-id");
+  const clientSecret = await getSecret(tool, "client-secret");
+  const redirectUri = await getSecret(tool, "redirect-uri");
   if (!clientId || !clientSecret || !redirectUri) {
     throw new Error(`No OAuth2 credentials for "${tool}". Run: ${tool} auth-setup`);
   }
   return { clientId, clientSecret, redirectUri };
 }
 
-/**
- * Build the OAuth2 authorization URL for the user to visit.
- */
+/** Build the OAuth2 authorization URL for the user to visit. */
 export function buildAuthorizeUrl(
   config: OAuth2Config,
   clientId: string,
   redirectUri: string,
-  state: string
+  state: string,
 ): string {
   const params = new URLSearchParams({
     response_type: "code",
@@ -62,15 +56,13 @@ export function buildAuthorizeUrl(
   return `${config.authorizeUrl}?${params}`;
 }
 
-/**
- * Exchange an authorization code for tokens.
- */
+/** Exchange an authorization code for tokens. */
 export async function exchangeCode(
   config: OAuth2Config,
   clientId: string,
   clientSecret: string,
   redirectUri: string,
-  code: string
+  code: string,
 ): Promise<OAuth2Tokens> {
   const body = new URLSearchParams({
     grant_type: "authorization_code",
@@ -95,14 +87,12 @@ export async function exchangeCode(
   return parseTokenResponse(data);
 }
 
-/**
- * Refresh an access token using a refresh token.
- */
+/** Refresh an access token using a refresh token. */
 export async function refreshAccessToken(
   config: OAuth2Config,
   clientId: string,
   clientSecret: string,
-  refreshToken: string
+  refreshToken: string,
 ): Promise<OAuth2Tokens> {
   const body = new URLSearchParams({
     grant_type: "refresh_token",
@@ -127,22 +117,18 @@ export async function refreshAccessToken(
   return parseTokenResponse(data, refreshToken);
 }
 
-/**
- * Save tokens to Keychain.
- */
-export function saveTokens(tool: string, tokens: OAuth2Tokens): void {
-  setSecret(tool, "access-token", tokens.accessToken);
-  setSecret(tool, "refresh-token", tokens.refreshToken);
-  setSecret(tool, "expires-at", String(tokens.expiresAt));
+/** Save tokens to the keychain. */
+export async function saveTokens(tool: string, tokens: OAuth2Tokens): Promise<void> {
+  await setSecret(tool, "access-token", tokens.accessToken);
+  await setSecret(tool, "refresh-token", tokens.refreshToken);
+  await setSecret(tool, "expires-at", String(tokens.expiresAt));
 }
 
-/**
- * Load tokens from Keychain. Returns null if not logged in.
- */
-export function loadTokens(tool: string): OAuth2Tokens | null {
-  const accessToken = getSecret(tool, "access-token");
-  const refreshToken = getSecret(tool, "refresh-token");
-  const expiresAt = getSecret(tool, "expires-at");
+/** Load tokens from the keychain. Returns null if not logged in. */
+export async function loadTokens(tool: string): Promise<OAuth2Tokens | null> {
+  const accessToken = await getSecret(tool, "access-token");
+  const refreshToken = await getSecret(tool, "refresh-token");
+  const expiresAt = await getSecret(tool, "expires-at");
   if (!accessToken || !refreshToken) return null;
   return {
     accessToken,
@@ -154,17 +140,16 @@ export function loadTokens(tool: string): OAuth2Tokens | null {
 /**
  * Get a valid access token, auto-refreshing if expired.
  *
- * @param tool          Per-account keychain namespace for tokens (e.g. "pigeon-s4t")
- * @param config        OAuth2 endpoint config
- * @param credentialsTool  Base keychain namespace for client creds (e.g. "pigeon").
- *                         Defaults to `tool` for backwards compat.
+ * @param tool             Per-account keychain namespace for tokens (e.g. "<tool>-s4t")
+ * @param config           OAuth2 endpoint config
+ * @param credentialsTool  Base keychain namespace for client creds. Defaults to `tool`.
  */
 export async function getValidAccessToken(
   tool: string,
   config: OAuth2Config,
-  credentialsTool?: string
+  credentialsTool?: string,
 ): Promise<string> {
-  const tokens = loadTokens(tool);
+  const tokens = await loadTokens(tool);
   if (!tokens) {
     throw new Error(`Not logged in. Run: ${tool} auth-login`);
   }
@@ -175,23 +160,21 @@ export async function getValidAccessToken(
   }
 
   // Token expired — refresh it
-  const creds = loadOAuth2Credentials(credentialsTool ?? tool);
+  const creds = await loadOAuth2Credentials(credentialsTool ?? tool);
   const refreshed = await refreshAccessToken(
     config,
     creds.clientId,
     creds.clientSecret,
-    tokens.refreshToken
+    tokens.refreshToken,
   );
-  saveTokens(tool, refreshed);
+  await saveTokens(tool, refreshed);
   return refreshed.accessToken;
 }
 
-/**
- * Delete all OAuth2 data from Keychain for a tool.
- */
-export function clearOAuth2Data(tool: string): void {
+/** Delete all OAuth2 data from the keychain for a tool. */
+export async function clearOAuth2Data(tool: string): Promise<void> {
   for (const key of ["client-id", "client-secret", "redirect-uri", "access-token", "refresh-token", "expires-at"]) {
-    deleteSecret(tool, key);
+    await deleteSecret(tool, key);
   }
 }
 

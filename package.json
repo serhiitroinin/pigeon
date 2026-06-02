@@ -1,6 +1,6 @@
 {
   "name": "pigeon",
-  "version": "0.1.3",
+  "version": "0.2.0",
   "description": "Email CLI for Gmail and Fastmail — multi-account inbox from your shell",
   "module": "src/cli.ts",
   "type": "module",
